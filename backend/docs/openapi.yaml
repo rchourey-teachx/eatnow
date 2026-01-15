@@ -1,0 +1,1097 @@
+openapi: 3.0.3
+info:
+  title: Food Delivery Backend API
+  description: |
+    Real-time food delivery tracking system API built with Node.js, TypeScript, Kafka, Redis, and PostgreSQL.
+
+    ## Features
+    - Order Management: Create, track, and update order status
+    - Rider Management: Track rider online/offline status and locations
+    - Real-time Matching: Automatically match orders with available riders
+    - Live Tracking: Real-time order status from Redis for fast reads
+    - Reassignment: Automatic order reassignment when a rider goes offline
+
+    ## Kafka Topics
+    - `order.created` - When a new order is placed
+    - `order.ready` - When restaurant marks order ready
+    - `order.assigned` - When order is assigned to a rider
+    - `order.delivered` - When order is delivered
+    - `rider.online` - When rider goes online
+    - `rider.location` - When rider updates location
+    - `rider.offline` - When rider goes offline
+
+  version: 1.0.0
+  contact:
+    name: Food Delivery Support
+    email: support@fooddelivery.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:3000/api
+    description: Local Development Server
+
+tags:
+  - name: Orders
+    description: Order management endpoints
+  - name: Riders
+    description: Rider management endpoints
+  - name: Health
+    description: Health check endpoints
+
+paths:
+  # ==================== ORDER ENDPOINTS ====================
+  /orders:
+    post:
+      tags:
+        - Orders
+      summary: Create a new order
+      description: Creates a new order which will be saved to PostgreSQL and emit an order.created event to Kafka
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+            example:
+              customerId: "11111111-1111-1111-1111-111111111111"
+              restaurantId: "aaaa1111-1111-1111-1111-111111111111"
+              items:
+                - id: "1"
+                  name: "Pepperoni Pizza"
+                  quantity: 2
+                  price: 15.99
+                - id: "2"
+                  name: "Garlic Bread"
+                  quantity: 1
+                  price: 4.99
+              deliveryAddress:
+                street: "123 Customer St"
+                city: "New York"
+                state: "NY"
+                zip_code: "10001"
+                latitude: 40.7128
+                longitude: -74.006
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /orders/{orderId}:
+    get:
+      tags:
+        - Orders
+      summary: Get order by ID
+      description: Retrieves order details from PostgreSQL
+      operationId: getOrderById
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /orders/{orderId}/status:
+    get:
+      tags:
+        - Orders
+      summary: Get live order status
+      description: |
+        Retrieves real-time order status from Redis (fast reads).
+        Falls back to PostgreSQL if not in Redis.
+        Includes rider location if order is assigned.
+      operationId: getOrderStatus
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Live order status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusResponse'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /orders/{orderId}/ready:
+    post:
+      tags:
+        - Orders
+      summary: Mark order as ready
+      description: |
+        Restaurant marks order as ready for pickup.
+        This emits an order.ready event and adds the order to the unassigned queue in Redis.
+        The matching service will then try to assign an available rider.
+      operationId: markOrderReady
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order marked as ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /orders/{orderId}/pickup:
+    post:
+      tags:
+        - Orders
+      summary: Mark order as picked up
+      description: Rider marks order as picked up from the restaurant
+      operationId: markOrderPickedUp
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order picked up
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /orders/{orderId}/transit:
+    post:
+      tags:
+        - Orders
+      summary: Mark order as in transit
+      description: Rider marks order as in transit to delivery location
+      operationId: markOrderInTransit
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order in transit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /orders/{orderId}/delivered:
+    post:
+      tags:
+        - Orders
+      summary: Mark order as delivered
+      description: |
+        Rider marks order as delivered.
+        This emits an order.delivered event and frees up the rider for new orders.
+      operationId: markOrderDelivered
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: UUID of the order
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order delivered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /orders/customer/{customerId}:
+    get:
+      tags:
+        - Orders
+      summary: Get orders by customer
+      description: Retrieves all orders for a specific customer
+      operationId: getOrdersByCustomer
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          description: UUID of the customer
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of customer orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Order'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ==================== RIDER ENDPOINTS ====================
+  /riders:
+    post:
+      tags:
+        - Riders
+      summary: Create a new rider
+      description: Creates a new rider in the system
+      operationId: createRider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRiderRequest'
+            example:
+              name: "John Rider"
+              phone: "+1234567890"
+              email: "john.rider@example.com"
+              vehicleType: "motorcycle"
+      responses:
+        '201':
+          description: Rider created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiderResponse'
+        '400':
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      tags:
+        - Riders
+      summary: List all riders
+      description: Retrieves all riders from the database
+      operationId: getAllRiders
+      responses:
+        '200':
+          description: List of riders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Rider'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /riders/online:
+    get:
+      tags:
+        - Riders
+      summary: List online riders
+      description: Retrieves all currently online riders from Redis
+      operationId: getOnlineRiders
+      responses:
+        '200':
+          description: List of online riders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OnlineRider'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /riders/stats/matching:
+    get:
+      tags:
+        - Riders
+      summary: Get matching statistics
+      description: Get current matching service statistics including unassigned orders and available riders
+      operationId: getMatchingStats
+      responses:
+        '200':
+          description: Matching statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchingStats'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /riders/{riderId}:
+    get:
+      tags:
+        - Riders
+      summary: Get rider by ID
+      description: Retrieves rider details from PostgreSQL
+      operationId: getRiderById
+      parameters:
+        - name: riderId
+          in: path
+          required: true
+          description: UUID of the rider
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Rider details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rider'
+        '404':
+          description: Rider not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /riders/{riderId}/online:
+    post:
+      tags:
+        - Riders
+      summary: Rider goes online
+      description: |
+        Sets rider status to online with their current location.
+        Emits rider.online event to Kafka.
+        Matching service will check for unassigned orders.
+      operationId: riderGoOnline
+      parameters:
+        - name: riderId
+          in: path
+          required: true
+          description: UUID of the rider
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationUpdate'
+            example:
+              latitude: 40.7128
+              longitude: -74.006
+      responses:
+        '200':
+          description: Rider is now online
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiderResponse'
+        '400':
+          description: Missing location data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Rider not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /riders/{riderId}/offline:
+    post:
+      tags:
+        - Riders
+      summary: Rider goes offline
+      description: |
+        Sets rider status to offline.
+        If rider has an active order, it will be reassigned to another available rider.
+        Emits rider.offline event to Kafka.
+      operationId: riderGoOffline
+      parameters:
+        - name: riderId
+          in: path
+          required: true
+          description: UUID of the rider
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Rider is now offline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiderResponse'
+        '404':
+          description: Rider not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /riders/{riderId}/location:
+    post:
+      tags:
+        - Riders
+      summary: Update rider location
+      description: |
+        Updates rider's current location.
+        Emits rider.location event to Kafka.
+        Location is stored in Redis for fast access.
+      operationId: updateRiderLocation
+      parameters:
+        - name: riderId
+          in: path
+          required: true
+          description: UUID of the rider
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationUpdate'
+            example:
+              latitude: 40.715
+              longitude: -74.005
+      responses:
+        '200':
+          description: Location updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Location updated"
+        '400':
+          description: Missing location data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      tags:
+        - Riders
+      summary: Get rider location
+      description: Retrieves rider's current location from Redis
+      operationId: getRiderLocation
+      parameters:
+        - name: riderId
+          in: path
+          required: true
+          description: UUID of the rider
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Rider location
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Location'
+        '404':
+          description: Location not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /riders/{riderId}/current-order:
+    get:
+      tags:
+        - Riders
+      summary: Get rider's current order
+      description: Retrieves the order ID currently assigned to the rider
+      operationId: getRiderCurrentOrder
+      parameters:
+        - name: riderId
+          in: path
+          required: true
+          description: UUID of the rider
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Current order ID or null
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currentOrder:
+                    type: string
+                    format: uuid
+                    nullable: true
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /riders/{riderId}/location-history:
+    get:
+      tags:
+        - Riders
+      summary: Get rider location history
+      description: Retrieves rider's location history from PostgreSQL
+      operationId: getRiderLocationHistory
+      parameters:
+        - name: riderId
+          in: path
+          required: true
+          description: UUID of the rider
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of records to return
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Location history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Location'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ==================== HEALTH ENDPOINTS ====================
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Full health check
+      description: Checks connectivity to PostgreSQL, Redis, and Kafka
+      operationId: healthCheck
+      responses:
+        '200':
+          description: All services healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: One or more services unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness check
+      description: Checks if the service is ready to accept requests
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ready"
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "not ready"
+
+  /health/live:
+    get:
+      tags:
+        - Health
+      summary: Liveness check
+      description: Checks if the service is alive
+      operationId: livenessCheck
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "alive"
+
+components:
+  schemas:
+    # ==================== REQUEST SCHEMAS ====================
+    CreateOrderRequest:
+      type: object
+      required:
+        - customerId
+        - restaurantId
+        - items
+        - deliveryAddress
+      properties:
+        customerId:
+          type: string
+          format: uuid
+          description: UUID of the customer placing the order
+        restaurantId:
+          type: string
+          format: uuid
+          description: UUID of the restaurant
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+          minItems: 1
+        deliveryAddress:
+          $ref: '#/components/schemas/Address'
+
+    CreateRiderRequest:
+      type: object
+      required:
+        - name
+        - phone
+        - email
+      properties:
+        name:
+          type: string
+          description: Full name of the rider
+        phone:
+          type: string
+          description: Phone number
+        email:
+          type: string
+          format: email
+          description: Email address
+        vehicleType:
+          type: string
+          enum: [bicycle, motorcycle, car, scooter]
+          default: bicycle
+          description: Type of vehicle
+
+    LocationUpdate:
+      type: object
+      required:
+        - latitude
+        - longitude
+      properties:
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          description: Latitude coordinate
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          description: Longitude coordinate
+
+    # ==================== RESPONSE SCHEMAS ====================
+    OrderResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        order:
+          $ref: '#/components/schemas/Order'
+
+    RiderResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        rider:
+          $ref: '#/components/schemas/Rider'
+
+    OrderStatusResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        riderId:
+          type: string
+          format: uuid
+          nullable: true
+        riderLocation:
+          $ref: '#/components/schemas/Location'
+        estimatedDeliveryTime:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        services:
+          type: object
+          properties:
+            postgres:
+              type: string
+              enum: [connected, disconnected]
+            redis:
+              type: string
+              enum: [connected, disconnected]
+            kafka:
+              type: string
+              enum: [connected, disconnected]
+
+    MatchingStats:
+      type: object
+      properties:
+        unassignedOrders:
+          type: integer
+          description: Number of orders waiting for rider assignment
+        onlineRiders:
+          type: integer
+          description: Number of riders currently online
+        availableRiders:
+          type: integer
+          description: Number of riders available for new orders
+
+    # ==================== ENTITY SCHEMAS ====================
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        restaurant_id:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        total_amount:
+          type: number
+          format: double
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        delivery_address:
+          $ref: '#/components/schemas/Address'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    OrderItem:
+      type: object
+      required:
+        - id
+        - name
+        - quantity
+        - price
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        price:
+          type: number
+          format: double
+          minimum: 0
+
+    OrderStatus:
+      type: string
+      enum:
+        - created
+        - confirmed
+        - preparing
+        - ready
+        - assigned
+        - picked_up
+        - in_transit
+        - delivered
+        - cancelled
+
+    Rider:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        vehicle_type:
+          type: string
+        status:
+          $ref: '#/components/schemas/RiderStatus'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RiderStatus:
+      type: string
+      enum:
+        - offline
+        - online
+        - busy
+
+    OnlineRider:
+      type: object
+      properties:
+        riderId:
+          type: string
+          format: uuid
+        location:
+          $ref: '#/components/schemas/Location'
+        onlineSince:
+          type: string
+          format: date-time
+
+    Address:
+      type: object
+      required:
+        - street
+        - city
+        - state
+        - zip_code
+        - latitude
+        - longitude
+      properties:
+        street:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        zip_code:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+
+    Location:
+      type: object
+      properties:
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        timestamp:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
