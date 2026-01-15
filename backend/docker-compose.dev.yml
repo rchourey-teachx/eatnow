@@ -1,0 +1,33 @@
+version: '3.8'
+
+# Full stack docker-compose including the backend application
+# Use: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: food-delivery-backend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=fooddelivery
+      - POSTGRES_PASSWORD=fooddelivery123
+      - POSTGRES_DB=fooddelivery
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - KAFKA_BROKERS=kafka:29092
+      - KAFKA_CLIENT_ID=food-delivery-service
+      - KAFKA_GROUP_ID=food-delivery-group
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    networks:
+      - food-delivery-network
+    restart: unless-stopped
