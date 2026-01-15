@@ -185,7 +185,7 @@ curl -X POST http://localhost:3000/api/orders/{orderId}/ready
 ### 3. Rider Goes Online
 
 ```bash
-curl -X POST http://localhost:3000/api/riders/rrrr1111-1111-1111-1111-111111111111/online \
+curl -X POST http://localhost:3000/api/riders/d1d1d1d1-1111-1111-1111-111111111111/online \
   -H "Content-Type: application/json" \
   -d '{
     "latitude": 40.7128,
@@ -202,7 +202,7 @@ curl http://localhost:3000/api/orders/{orderId}/status
 ### 5. Update Rider Location
 
 ```bash
-curl -X POST http://localhost:3000/api/riders/rrrr1111-1111-1111-1111-111111111111/location \
+curl -X POST http://localhost:3000/api/riders/d1d1d1d1-1111-1111-1111-111111111111/location \
   -H "Content-Type: application/json" \
   -d '{
     "latitude": 40.7150,

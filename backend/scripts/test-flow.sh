@@ -51,7 +51,7 @@ curl -s "$BASE_URL/api/orders/$ORDER_ID/status" | jq .
 echo ""
 
 # 4. Rider Goes Online
-RIDER_ID="rrrr1111-1111-1111-1111-111111111111"
+RIDER_ID="d1d1d1d1-1111-1111-1111-111111111111"
 echo -e "${YELLOW}4. Rider $RIDER_ID Goes Online${NC}"
 curl -s -X POST "$BASE_URL/api/riders/$RIDER_ID/online" \
   -H "Content-Type: application/json" \

@@ -36,7 +36,7 @@ echo -e "${GREEN}Order ID: $ORDER_ID${NC}"
 echo ""
 
 # 2. First Rider Goes Online
-RIDER1_ID="rrrr1111-1111-1111-1111-111111111111"
+RIDER1_ID="d1d1d1d1-1111-1111-1111-111111111111"
 echo -e "${YELLOW}2. Rider 1 ($RIDER1_ID) Goes Online${NC}"
 curl -s -X POST "$BASE_URL/api/riders/$RIDER1_ID/online" \
   -H "Content-Type: application/json" \
@@ -45,7 +45,7 @@ echo ""
 sleep 1
 
 # 3. Second Rider Goes Online
-RIDER2_ID="rrrr2222-2222-2222-2222-222222222222"
+RIDER2_ID="d2d2d2d2-2222-2222-2222-222222222222"
 echo -e "${YELLOW}3. Rider 2 ($RIDER2_ID) Goes Online${NC}"
 curl -s -X POST "$BASE_URL/api/riders/$RIDER2_ID/online" \
   -H "Content-Type: application/json" \
